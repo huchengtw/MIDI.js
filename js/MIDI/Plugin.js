@@ -263,11 +263,13 @@ if (window.Audio) (function () {
 	var note2id = {};
 	var volume = 127; // floating point 
 	var channel_nid = -1; // current channel
-	var channels = []; // the audio channels
+	var channels = []; // the cached audio channels
+	var playingChannels = []; // active playing channels
 	var channelInstrumentNoteIds = []; // instrumentId + noteId that is currently playing in each 'channel', for routing noteOff/chordOff calls
 	var notes = {}; // the piano keys
 	for (var nid = 0; nid < 12; nid++) {
-		channels[nid] = new Audio();
+		channels[nid] = {}; // audio cache map
+		playingChannels[nid] = {}; // active player map
 	}
 
 	var playChannel = function (channel, note) {
@@ -278,11 +280,19 @@ if (window.Audio) (function () {
 		if (!note) return;
 		var instrumentNoteId = instrumentId + "" + note.id;
 		var nid = (channel_nid + 1) % channels.length;
-		var audio = channels[nid];
+		var audios = channels[nid];
+		// prepare note cache
+		if (!audios[note.id]) {
+			audios[note.id] = new Audio();
+			// preload it.
+			audios[note.id].src = MIDI.Soundfont[instrumentId][note.id];
+		}
 		channelInstrumentNoteIds[ nid ] = instrumentNoteId;
-		audio.src = MIDI.Soundfont[instrumentId][note.id];
+		// to have better performance, use cloneNode to have multiple audio element.
+		var audio = audios[note.id].cloneNode(false);
 		audio.volume = volume / 127;
 		audio.play();
+		playingChannels[nid][note.id] = audio;
 		channel_nid = nid;
 	};
 
@@ -299,7 +309,11 @@ if (window.Audio) (function () {
 			var cId = channelInstrumentNoteIds[nid];
 
 			if(cId && cId == instrumentNoteId){
-				channels[nid].pause();
+				// to set src to null is very important which makes FF unload have a
+				// chance to unload resource
+				playingChannels[nid][note.id].src = null;
+				playingChannels[nid][note.id].pause();
+				delete playingChannels[nid][note.id];
 				channelInstrumentNoteIds[nid] = null;
 				return;
 			}
@@ -369,8 +383,12 @@ if (window.Audio) (function () {
 	};
 	
 	root.stopAllNotes = function () {
-		for (var nid = 0, length = channels.length; nid < length; nid++) {
-			channels[nid].pause();
+		for (var cid = 0, length = playingChannels.length; cid < length; cid++) {
+			for (var nid in playingChannels[cid]) {
+				playingChannels[cid][nid].src = null;
+				playingChannels[cid][nid].pause();
+			}
+			playingChannels[cid] = {};
 		}
 	};
 	
